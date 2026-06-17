@@ -1,15 +1,5 @@
-# specific for SSR2Genomvergleicher2
-# no private notes
 *.private.txt
 private/
-# no user / generated data
-*.xlsx
-*.csv
-*.protocol.txt
-
-# vim specific
-*~
-
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
