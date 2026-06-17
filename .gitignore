@@ -1,11 +1,13 @@
-# specific for SSR2Genomvergleicher2
-# no private notes
+# specific for SSR2Genomvergleicher2:
+# exclude private notes
 *.private.txt
 private/
-# no user / generated data
+# exclude user generated data
 *.xlsx
 *.csv
 *.protocol.txt
+# exclude files with one-letter-names, as they are probably erroneously created
+?
 
 # vim specific
 *~
