@@ -9,8 +9,10 @@ private/
 # exclude files with one-letter-names, as they are probably erroneously created
 ?
 
-# vim specific
+# vim-specific
 *~
+# libreoffice-specific
+.~lock.*
 
 
 # Byte-compiled / optimized / DLL files
