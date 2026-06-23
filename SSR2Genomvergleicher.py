@@ -10,19 +10,17 @@ Format of output data (Genomvergleicher2 standard):
 	- Anything from column 8 ('H') on is genotype data,
 	  anything before is metadata
 
-Note: openpyxl (a backend library used by pandas.read_excel) version 3.1.2 is buggy
-and might cause the cryptic error message "Value must be either numerical or a string containing a wildcard".
+Note: openpyxl (a backend library used by pandas.read_excel) version 3.1.2
+is buggy and might cause the cryptic error message
+"Value must be either numerical or a string containing a wildcard".
 Avoid this version in your python setup.
 """
 
 # libraries:
-import pandas as pd
 import sys
 import argparse
 from pathlib import Path
-import os.path
-##from io import StringIO
-
+import pandas as pd
 
 # configuration:
 
@@ -31,16 +29,30 @@ import os.path
 verbosity = 1
 
 # Program version string
-version = "0.1"
+VERSION = "0.1"
 
 
 def log(msg, header=""):
+	""" Prints a message under a header when global variable verbosity > 0.
+	Args:
+		msg (any type): A message string or just any other datatype. Will be printed.
+		header (str, optional): A title that will be printed above the message. Defaults to "".
+	Returns:
+		None.
+	"""
 	if verbosity > 0:
 		print(">>>" + header + ":")
 		print(msg)
 
 
 def debug(msg, header=""):
+	""" Prints a message under a header when global variable verbosity > 1.
+	Args:
+		msg (any type): A message string or just any other datatype. Will be printed.
+		header (str, optional): A title that will be printed above the message. Defaults to "".
+	Returns:
+		None.
+	"""
 	if verbosity > 1:
 		print(">>>" + header + ":")
 		print(msg)
@@ -52,13 +64,19 @@ def parseParams():
 		params (dict): parameters parsed from CL.
 	"""
 	parser = argparse.ArgumentParser(
-	  description="""Transforms a spreadsheet file or csv table with SSR data into a csv table fit to be loaded into Genomvergleicher2.
+	  description="""Transforms a spreadsheet file or csv table
+	  with SSR data into a csv table fit to be loaded into Genomvergleicher2.
 	  Optionally attach to a existant table, omitting duplicates.
-	  \n Table columns can be given by name, letter or number (starting at 1).
-	  Where adequate, information not given explicitly will be guessed or omitted.""",
+
+	  Table columns can be given by name, letter or number (starting at 1).
+	  Where adequate, information not given explicitly
+	  will be guessed or omitted.
+	  """,
 	  add_help=True)
 
-	parser.add_argument("-V", "--version", action='version', version=f"SSR2Genomvergleicher version {version} -- try '--help' for further instructions")
+	parser.add_argument("-V", "--version",
+	  action='version',
+	  version=f"SSR2Genomvergleicher version {VERSION} -- try '--help' for further instructions")
 	parser.add_argument("-v", "--verbose",
 	  action='store_const',
 	  const=1,
@@ -93,7 +111,7 @@ def parseParams():
 	  help="Which column to use as the 'Reference' column (with information weather this is a reference genotype).\n")
 	parser.add_argument("-t", "--trueness",
 	  default="",
-	  help="Which column to use as the 'Trueness-to-Type' column.\n") # When no column is given, we will assume '4' = not tested.\n")
+	  help="Which column to use as the 'Trueness-to-Type' column.\n")
 	parser.add_argument("-m", "--munq",
 	  default="",
 	  help="Which column to use as the 'MUNQ' (unique genotype code) column.\n")
@@ -117,9 +135,9 @@ def parseParams():
 	  default=" ", # again the space char
 	  help="Filename for output.\n")
 
-	params = vars(parser.parse_args())
-	params["help"] = parser.format_help()
-	return params
+	outputDict = vars(parser.parse_args())
+	##outputDict["help"] = parser.format_help()
+	return outputDict
 
 
 def guessOrGet(parameter, inputCols):
@@ -132,22 +150,29 @@ def guessOrGet(parameter, inputCols):
 	Returns:
 		str: A column name from the input file.
 	"""
-	out = []
+	if len(inputCols) == 0:
+		print("Error: 'guessOrGet' called without any inputCols to choose from!")
+	menu = []
 	for colName in inputCols:
-		if colName.upper().find(parameter.upper()) > -1:
-			out.append(colName)
-	if len(out) == 0:
-		# prompt user
+		if colName.upper().find(parameter.upper()) > -1: ##ToDo: Use a fuzzy find instead?
+			# parameter is among the input columns
+			menu.append(colName)
+
+	if len(menu) == 0:
+		# parameter not found among the input cols
+		# => let user pick from all metadata columns
 		print("\nUnable to guess " + parameter.upper() + " column. Please pick manually:")
-		out = [usersPick(inputCols)]
-	if len(out) > 1:
-		# more than one candidate - let user pick one
+		return usersPick(inputCols)
+	if len(menu) == 1:
+		# only one match found
+		return menu[0]
+	elif len(menu) > 1:
+		# more than one candidate among metadata cols - let user pick one
 		print("More than one candidate column for " + parameter.upper() + " found. Please pick one:")
-		out = [usersPick(out)]
-	return out[0]
+		return usersPick(menu)
 
 
-def usersPick(l=None, required=False, onePerRow=True):
+def usersPick(l=None, required=False, optSpacer="\n"):
 	""" Have the user interactively pick one item from a list.
 	Args:
 		l (list-like, or None):
@@ -160,25 +185,23 @@ def usersPick(l=None, required=False, onePerRow=True):
 			If False, the user is presented with the option
 			to reject to choose, without quitting.
 	Returns:
-		None if required == False and the user enters 'x'
-		An item from parameter l as picked by the user if a list l was passed
-		A string the user entered if no list l was passed
+		None if required == False and the user entered 'x'
+		An item from parameter l as picked by the user if l was passed
+		The string entered by the user if no list l was passed
 	"""
 	prompt = "\n"
-	optSpacer = "\n"
-	if onePerRow == False:
-		optSpacer = "  |  "
 	specialOpts = ["q"]
 	thirdOpt = ""
-	if required == False:
+	if required is False:
 		thirdOpt = "letter 'x' to leave blank, "
 		specialOpts = ["q", "x"]
 	if l is not None:
 		for index, item in enumerate(l):
 			# we want to show a 1-based list, so we add 1 to the indices:
 			prompt += (f"{index + 1}) {item}" + optSpacer)
-	a = "§" # we'll keep asking until the user makes sense!
+	a = ""
 	while not (a.isdecimal() or (a in specialOpts)):
+		# we'll keep asking until the user makes sense!
 		print(prompt)
 		a = input("\nPlease enter number, " + thirdOpt + "or 'q' to quit: ")
 	if a == "q":
@@ -189,31 +212,36 @@ def usersPick(l=None, required=False, onePerRow=True):
 	if l is None:
 		return a
 	else:
-		return l[int(a) - 1]
+		return l[int(a) - 1] # we return the value, not the index
 
 
 def askForStartRow():
+	""" Make sure we have a data start row that defines the header / column labels row
+	Returns:
+		int: The first row of data, 1-based.
+	"""
 	# load files, preliminary
 	if params["infile"].lower().endswith(".csv"):
-		df1 = pd.read_csv(params["infile"],
+		prelimDf = pd.read_csv(params["infile"],
 		  sep=";",
 		  header=None,
 		  engine="pyarrow",
-		  escapechar="Ŧ",
+		  escapechar="\\", # we need to escape the backslash
 		  skip_blank_lines=True,
 		  skipinitialspace=True)
 	else:
 		# not a .csv, so probly some sort of officeware spreadsheet...
 		# pandas.read_excel can digest them all.
-		df1 = pd.read_excel(
+		prelimDf = pd.read_excel(
 		  params["infile"],
 		  header=None,
 		  sheet_name=int(params["sheet"]) - 1
 		  )
-	# purpose-made df for the user to pick start row:
-	(nRow, nCol) = df1.shape
-	df0 = pd.DataFrame("", index=range(1), columns=range(nCol))
-	df1 = pd.concat([df0, df1], axis="index", ignore_index=True)
+	# purpose-made df to reshape the input,
+	# for the user to pick start row in a 1-based manner:
+	(ourRow, ourCol) = prelimDf.shape
+	zeroDf = pd.DataFrame("", index=range(1), columns=range(ourCol))
+	prelimDf = pd.concat([zeroDf, prelimDf], axis="index", ignore_index=True)
 
 	print("""
   The row in which the genetic data start has not been defined -
@@ -221,20 +249,40 @@ def askForStartRow():
   (Hint: We are looking for the first row that is NOT column labels.
   If you don't know what to do, '2' would be a good guess.)
   """)
-	print(df1.iloc[1:6])
+	print(prelimDf.iloc[1:6])
 	return int(usersPick(required=True))
 
 
-def maskSpecialChars(input):
+def positiveOrNone(n, printIfNone="", printIfNotNone=""):
+	""" Returns None if a value is not >= 0
+	Args:
+		n (int or float): Input
+		printIfNone (str): Message to print if n is Negative
+		printIfNotNone (str): Message to print if n is 0 or Positive
+	Returns:
+		n if it is 0 or Positive,
+		None if n is Negative
+	"""
+	if n >= 0:
+		if printIfNotNone != "":
+			print(printIfNotNone)
+		return n
+	else:
+		if printIfNone != "":
+			print(printIfNone)
+		return None
+
+
+def maskSpecialChars(inputData):
 	""" Replace certain characters with other, in a hard-coded manner.
 		Will mostly be called from Lamda expressions.
 	Args:
-		input (any, as string): Typically, a string-like to have certain chars replaced.
+		inputData (any, as string): Typically, a string-like to have certain chars replaced.
 	Returns:
 		str: A string in which certain characters have been substituted with placeholders.
 	"""
-	s = str(input).replace(";",",")
-	return str(s).replace("|","~")
+	outData = str(inputData).replace(";",",")
+	return str(outData).replace("|","~")
 
 
 def askForFilenames():
@@ -255,10 +303,10 @@ def askForFilenames():
 			# just in case, we'll ask the user for a premade file
 			# to attach data to
 			attfilename = "/"
-			while attfilename == "/":
+			while attfilename == "/": ##ToDo: Use a decent file chooser!
 				print("\nWould you like to attach your genetic data to a preexistant table?")
 				attfilename = input("Please enter filename, or press ENTER to not attach anywhere.")
-				if attfilename != "" and (not os.path.isfile(attfilename)):
+				if attfilename != "" and (not Path(attfilename).is_file()):
 					attfilename = "/"
 					print("File not found. Please try again.")
 			params["attachto"] = attfilename
@@ -269,7 +317,7 @@ def askForFilenames():
 			sys.exit(0)
 
 	if params["outfile"] == " ": # no outfile given
-		params["outfile"] == ""
+		params["outfile"] = ""
 		if params["attachto"] == "":
 			# no file to attach data to either
 			if params["infile"].lower().endswith(".csv"):
@@ -287,7 +335,7 @@ def askForFilenames():
 				print(f"No output filename given. Assuming {params['outfile']}")
 
 	if params["overwrite"] == "x":
-		if os.path.isfile(params["outfile"]): #file exists
+		if Path(params["outfile"]).is_file(): #file exists
 			# overwriting has not been explicitely specified
 			answer = input(f" File {params['outfile']} already exists. Choose 'y' to overwrite or 'q' to quit.")
 			if str(answer).lower() == "y":
@@ -299,6 +347,13 @@ def askForFilenames():
 
 
 def convertToColLabels(paramDict, dframe): #currently unused?
+	""" Make sure the column specifications are labels, not numbers.
+	Args:
+		paramDict (dict): A dict that holds the column specifications, among other things.
+		dframe (DataFrame): The dataframe that the column specs refer to.
+	Returns:
+		paramDict (dict): The dict with the column specs now as labels.
+	"""
 	for key, value in paramDict.items():
 		log(value, key)
 		if key in ["name",
@@ -321,7 +376,17 @@ def convertToColLabels(paramDict, dframe): #currently unused?
 	return paramDict
 
 
-def convertToColNums(paramDict, dframe):
+def convertTo0basedColIndex(paramDict):
+	""" Converts column specification given as label, number or letter
+		to 0-based column index number.
+	Args:
+		paramDict (dict): The name-value dict that stores the arguments for this program
+	Returns:
+		paramDict (dict): The name-value dict with all values that denote columns
+		 converted to 0-based indices.
+	TODO: Stick an additional column to the input df,
+	and turn all undefined cols into references to this empty col
+	"""
 	for key, value in paramDict.items():
 		log(value, key)
 		if key in ["name",
@@ -331,12 +396,15 @@ def convertToColNums(paramDict, dframe):
 		  "munq",
 		  "ploidy",
 		  "includes_mutations",
-		  "startcol"]: # we only need to sanitize the column specs
-			if str(value).isdecimal():
+		  "startcol"]: # we only need to sanitize params that refer to column
+			if value is None:
+				paramDict[key] = -1 #we have to supply an empty last column in the input!
+				continue
+			elif str(value).isdecimal():
 				log(value , str(key) + " column is given as a number")
 				paramDict[key] = int(value) - 1
 				continue
-			elif len(str(value)) == 1 and str(value).isalpha():
+			elif (len(str(value)) == 1) and str(value).isalpha():
 				debug(key, "Column is given as letter")
 				paramDict[key] = int("abcdefghijklmnopqrstuvwxyz".index(value.lower()))
 				continue
@@ -345,12 +413,12 @@ def convertToColNums(paramDict, dframe):
 				try:
 					paramDict[key] = int(list(df1.columns).index(value))
 				except:
-					print(f"Can't find the column {value} you gave as parameter {key}.")
+					print(f"Failed to find the column {value} you gave as parameter {key}.")
 					print("Perhaps you misspelled it?")
 					print("Remember: Column labels are Case Sensitive!")
 					sys.exit(1)
 			else:
-				log("Can't make shaft nor bolt from this.", "")
+				log(str(key) + ": " + str(value), "Can't make shaft nor bolt from this")
 	return paramDict
 
 
@@ -366,9 +434,10 @@ def addColumn(dfA, dfB, colNum, newName):
 	"""
 	dfA.insert(loc=len(dfA.columns),
 	  column=newName,
-	  value=dfB.iloc[:,[colNum]],
+	  value=dfB.iloc[:, colNum],
 	  allow_duplicates=False)
 	return dfA
+
 
 
 # main program
@@ -380,6 +449,10 @@ params = parseParams()
 verbosity += int(params["verbose"]) + int(params["debug"])
 log(f"Parameters: {params}")
 
+if not Path(params["infile"]).is_file():
+	print(f"Error: Input file {params['infile']} not found. Perhaps you mistyped?")
+	sys.exit(1)
+
 # first make sure we have a startrow
 if params["startrow"] is None:
 	params["startrow"] = askForStartRow()
@@ -388,9 +461,10 @@ if params["startrow"] is None:
 if params["infile"].lower().endswith(".csv"):
 	df1 = pd.read_csv(params["infile"],
 	  sep=";",
-	  header=int(params["startrow"]) - 2,
+	  header=positiveOrNone(int(params["startrow"]) - 2,
+	   printIfNone="Warning: Your choice of start row results in a table without column labels!"),
 	  engine="pyarrow",
-	  escapechar="Ŧ",
+	  escapechar="\\",
 	  skip_blank_lines=True,
 	  skipinitialspace=True)
 else:
@@ -422,48 +496,60 @@ if params["startcol"] is None:
   please pick the correct column number manually.
   (Hint: We are looking for the first column that is NOT metadata.)
   """)
-	params["startcol"] = usersPick(df1.columns, required=True, onePerRow=False)
+	params["startcol"] = usersPick(df1.columns, required=True, optSpacer="  |  ")
 
 # make sure we have understood what the startcol arg wants to tell us:
 if str(params["startcol"]).isdecimal(): # start column given as column number
 	params["startcol"] = int(params["startcol"]) # just to make sure
-	metaCols = df1.iloc[ : 1, : params["startcol"]].columns
+	metaCols = df1.iloc[ : 1, : params["startcol"]-1].columns
 elif len(str(params["startcol"])) == 1: # start column given as column letter
+	# remember: For easier interaction with the user and conceptual clarity,
+	# we are using 1-based indexing almost until the end
 	startColNum = "abcdefghijklmnopqrstuvwxyz".index(str(params["startcol"]).lower()) + 1
-	metaCols = df1.iloc[ : 1, : startColNum].columns
+	metaCols = df1.iloc[ : 1, : startColNum - 1].columns
 else: # start column probably given by label
 	try:
-		startColNum = list(df1.columns).index(params["startcol"])
-		metaCols = df1.iloc[ : 1, : startColNum].columns
+		startColNum = list(df1.columns).index(params["startcol"]) + 1
+		metaCols = df1.iloc[ : 1, : startColNum - 1].columns
 	except:
 		metaCols = df1.columns
 		log("proceeding anyway...", "Could not identify start column")
 
 # now we file through the parameters:
-helpMessageDisplayed = False
+
+##helpMessageDisplayed = False
 for s in params.keys():
 	debug(params[s], s)
 	if params[s] == "" or params[s] == None:
+		"""
 		if helpMessageDisplayed == False:
 			# we haven't yet printed the help message, so we do now:
 			##print(params["help"])
 			##log(s, "This help message was brought to you on account of")
 			helpMessageDisplayed = True # we won't show this again
-		params[s] = guessOrGet(s, metaCols)
-del params["help"]
+		"""
+		params[s] = guessOrGet(s, metaCols) # get parameter as column label
+if "help" in params.keys():
+	del params["help"]
 
 # verify file names for output
 askForFilenames()
 log(params, "Final config:")
 
-debug(df1.columns, "Columns of Infile")
-debug(type(df1.columns), "Type of Column list")
-debug(df1.columns.array, "Columns of Infile by Index no.")
-debug(df1.columns.values, "Columns of Infile by Value")
+# sanitize column names, letters or 1-based numbers to 0-based column indices
+# ('None'-values will be turned into -1)
+params = convertTo0basedColIndex(params)
+log(params, "Sanitized:")
 
-# sanitize column names or letters to column numbers
-params = convertToColNums(params, df1)
-debug(params, "Sanitized:")
+# stick an empty last column to the input frame
+# so that 'None'-column indications give an empty column in the output
+(nRow, nCol) = df1.shape
+dfEmptyCol = pd.DataFrame("", index=range(nRow), columns=range(1))
+log(dfEmptyCol, "Empty DF")
+df1.insert(loc=len(df1.columns),
+  column="AnEmptyColumn",
+  value=dfEmptyCol.iloc[:,0],
+  allow_duplicates=True)
 
 # let's begin to construct the output table!
 dfOut = pd.DataFrame()
@@ -474,6 +560,9 @@ dfOut = addColumn(dfOut, df1, params["trueness"], "Trueness to Type")
 dfOut = addColumn(dfOut, df1, params["munq"], "MUNQ")
 dfOut = addColumn(dfOut, df1, params["ploidy"], "Ploidy")
 dfOut = addColumn(dfOut, df1, params["includes_mutations"], "Includes Mutations")
+
+#get rid of the empty last column
+del df1["AnEmptyColumn"]
 
 # add the actual genetic data
 dfOut = dfOut.join(df1.iloc[ : , (params["startcol"]) : ],
@@ -487,19 +576,15 @@ log(dfOut.columns, "Columns")
 # write output to file
 dfOut.to_csv(
   path_or_buf=params["outfile"],
+  ##mode="w" if params["overwrite"] == "w" else None,
   mode=params["overwrite"],
   sep=";",
   index=False,
 #  decimal=",",
-  escapechar="Ŧ"
+  escapechar="\\"
   )
 
 print("Done.")
 log("Wrote output to file " + params["outfile"])
-
-
-
-
-
 
 
