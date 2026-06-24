@@ -123,7 +123,7 @@ def parseParams():
 	  help="Which column to use as the 'Includes mutations' (that can't be differentiated using SSR markers) column.\n")
 
 	parser.add_argument("-a", "--attachto",
-	  default=" ", # space char - important marker!
+	  default="", ## space char - important marker!
 	  help="Attach results to this preexistant table formatted for Genomvergleicher.\n")
 	parser.add_argument("-w", "--overwrite",
 	  action="store_const",
@@ -132,7 +132,7 @@ def parseParams():
 	  help="""Specify this to overwrite the output file if it already exists.
 	  Else, the program will terminate in that case.\n""")
 	parser.add_argument("-o", "--outfile",
-	  default=" ", # again the space char
+	  default="", ## again the space char
 	  help="Filename for output.\n")
 
 	outputDict = vars(parser.parse_args())
@@ -294,9 +294,15 @@ def askForFilenames():
 	Returns:
 		None. Mofifies the global 'params' dictionary.
 	"""
-	if params["attachto"] == " ":
-		# no file to attach the data to was given
-		params["attachto"] = ""
+	if len(params["attachto"]) > 0: # a file to attach data to was named on CL
+		if not params["attachto"].lower().endswith(".csv"):
+			print("File to attach data to must be in .csv format, with a .csv ending. Please reconsider. Bye!")
+			sys.exit(1)
+		if not Path(params["attachto"]).is_file():
+			print("File to attach data to not found. Perhaps you misspelled? I quit. Bye!")
+			sys.exit(1)
+	else: # no file to attach the data to was given
+		##params["attachto"] = ""
 		if len(sys.argv) < 3:
 			# we've been called with only the infile as argument --
 			# perhaps we are in drag+drop-mode?
@@ -304,20 +310,27 @@ def askForFilenames():
 			# to attach data to
 			attfilename = "/"
 			while attfilename == "/": ##ToDo: Use a decent file chooser!
-				print("\nWould you like to attach your genetic data to a preexistant table?")
-				attfilename = input("Please enter filename, or press ENTER to not attach anywhere.")
-				if attfilename != "" and (not Path(attfilename).is_file()):
+				print("""
+  Would you like to attach your genetic data to a preexistant table?
+  (Hint: It might be more convenient to name a file to attach data to
+  on the command line with the '-a filename.csv' switch.)
+				  """)
+				attfilename = input("Please enter filename, 'q' to quit, or 'x' or just ENTER to not attach to another file.")
+				if attfilename == "q":
+					print("See you later!")
+					sys.exit(0)
+				if attfilename == "" or attfilename == "x":
+					attfilename = ""
+					break
+				if not Path(attfilename).is_file():
 					attfilename = "/"
 					print("File not found. Please try again.")
 			params["attachto"] = attfilename
 			log(params["attachto"], "Attach to file")
-	else: # a file to attach data to was named on CL
-		if not params["attachto"].lower().endswith(".csv"):
-			print("File to attach data to must be in .csv format. Please reconsider. Bye!")
-			sys.exit(0)
 
-	if params["outfile"] == " ": # no outfile given
-		params["outfile"] = ""
+	# check for outfile
+	if params["outfile"] == "": # no outfile given
+		##params["outfile"] = ""
 		if params["attachto"] == "":
 			# no file to attach data to either
 			if params["infile"].lower().endswith(".csv"):
@@ -344,6 +357,9 @@ def askForFilenames():
 				print("Bye, see you later!")
 				sys.exit(0)
 	log(params["overwrite"], "outfile overwrite mode")
+
+	if params["attachto"] == "":
+		del params["attachto"]
 
 
 def convertToColLabels(paramDict, dframe): #currently unused?
@@ -517,6 +533,9 @@ else: # start column probably given by label
 
 # now we file through the parameters:
 
+# verify file names for output
+askForFilenames()
+
 ##helpMessageDisplayed = False
 for s in params.keys():
 	debug(params[s], s)
@@ -532,8 +551,6 @@ for s in params.keys():
 if "help" in params.keys():
 	del params["help"]
 
-# verify file names for output
-askForFilenames()
 log(params, "Final config:")
 
 # sanitize column names, letters or 1-based numbers to 0-based column indices
@@ -566,25 +583,44 @@ del df1["AnEmptyColumn"]
 
 # add the actual genetic data
 dfOut = dfOut.join(df1.iloc[ : , (params["startcol"]) : ],
-  how="left",
-  rsuffix="XXX"
+  how="left"
   )
 
 log(dfOut, "Output")
-log(dfOut.columns, "Columns")
+log(dfOut.columns, "Output Columns")
 
 # write output to file
-dfOut.to_csv(
-  path_or_buf=params["outfile"],
-  ##mode="w" if params["overwrite"] == "w" else None,
-  mode=params["overwrite"],
-  sep=";",
-  index=False,
-#  decimal=",",
-  escapechar="\\"
-  )
+if True: ##not "attachto" in params.keys():
+	# we write output to its own file
+	dfOut.to_csv(
+	  path_or_buf=params["outfile"],
+	  ##mode="w" if params["overwrite"] == "w" else None,
+	  mode=params["overwrite"],
+	  sep=";",
+	  index=False,
+	#  decimal=",",
+	  escapechar="\\"
+	  )
+	print("Done.")
+	log("Wrote output to file " + params["outfile"])
+"""
+else:
+	# we attach output to another file, which must be in Genomvergleicher2 csv format
+	dfAttach = pd.read_csv(
+	  params["attachto"],
+	  sep=";",
+	  header=0,
+	  engine="pyarrow",
+	  escapechar="\\",
+	  skip_blank_lines=True,
+	  skipinitialspace=True)
 
-print("Done.")
-log("Wrote output to file " + params["outfile"])
+	if "deduplicate" in params.keys() and params["deduplicate"] is True:
+		dfOut = dedup(dfAttach, dfOut)
 
+	pass
+	  axis="index",
+	  ignore_index=True, # resulting df gets a new, clean row numbering
+	  join="outer",
 
+"""
