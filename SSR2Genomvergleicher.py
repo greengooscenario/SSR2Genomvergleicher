@@ -29,7 +29,7 @@ import pandas as pd
 verbosity = 1
 
 # Program version string
-VERSION = "0.1"
+VERSION = "0.2"
 
 
 def log(msg, header=""):
@@ -69,11 +69,12 @@ def parseParams():
 	  Optionally attach to a existant table, omitting duplicates.
 
 	  Table columns can be given by name, letter or number (starting at 1).
+	  Specify '0' to leave a column empty.
 	  Where adequate, information not given explicitly
 	  will be guessed or omitted.
 	  """,
 	  add_help=True)
-
+	#######################ToDo: Try to add second help option '-?'
 	parser.add_argument("-V", "--version",
 	  action='version',
 	  version=f"SSR2Genomvergleicher version {VERSION} -- try '--help' for further instructions")
@@ -150,11 +151,14 @@ def guessOrGet(parameter, inputCols):
 	Returns:
 		str: A column name from the input file.
 	"""
+	debug(parameter, "guessing Parameter")
+	debug(inputCols, "from columns")
 	if len(inputCols) == 0:
-		print("Error: 'guessOrGet' called without any inputCols to choose from!")
+		print("Warning: 'guessOrGet' called without any inputCols to choose from!")
 	menu = []
 	for colName in inputCols:
-		if colName.upper().find(parameter.upper()) > -1: ##ToDo: Use a fuzzy find instead?
+		debug(colName, "querying input column")
+		if str(colName).upper().find(parameter.upper()) > -1: ##ToDo: Use a fuzzy find instead?
 			# parameter is among the input columns
 			menu.append(colName)
 
@@ -282,7 +286,8 @@ def maskSpecialChars(inputData):
 		str: A string in which certain characters have been substituted with placeholders.
 	"""
 	outData = str(inputData).replace(";",",")
-	return str(outData).replace("|","~")
+	#return str(outData).replace("|","~")
+	return outData
 
 
 def askForFilenames():
@@ -400,8 +405,6 @@ def convertTo0basedColIndex(paramDict):
 	Returns:
 		paramDict (dict): The name-value dict with all values that denote columns
 		 converted to 0-based indices.
-	TODO: Stick an additional column to the input df,
-	and turn all undefined cols into references to this empty col
 	"""
 	for key, value in paramDict.items():
 		log(value, key)
@@ -413,7 +416,7 @@ def convertTo0basedColIndex(paramDict):
 		  "ploidy",
 		  "includes_mutations",
 		  "startcol"]: # we only need to sanitize params that refer to column
-			if value is None:
+			if (value is None) or (str(value) == ""):
 				paramDict[key] = -1 #we have to supply an empty last column in the input!
 				continue
 			elif str(value).isdecimal():
@@ -469,16 +472,26 @@ if not Path(params["infile"]).is_file():
 	print(f"Error: Input file {params['infile']} not found. Perhaps you mistyped?")
 	sys.exit(1)
 
-# first make sure we have a startrow
+# translate startrow into header column
 if params["startrow"] is None:
 	params["startrow"] = askForStartRow()
+
+if int(params["startrow"]) == 2:
+	# The data start in the second row, so the column labels ('header') are in first row, or in pythonic: The 0st row
+	debug("startrow is 2")
+	columnhead = 0
+elif int(params["startrow"]) > 2:
+	# There probably are several rows with header info; lets hope it makes sense to engulf them all
+	columnhead = list(range(int(params["startrow"]) - 1))
+else:
+	columnhead = None
+log(columnhead, "Rows to use as column headers")
 
 # now load input file:
 if params["infile"].lower().endswith(".csv"):
 	df1 = pd.read_csv(params["infile"],
 	  sep=";",
-	  header=positiveOrNone(int(params["startrow"]) - 2,
-	   printIfNone="Warning: Your choice of start row results in a table without column labels!"),
+	  header=columnhead,
 	  engine="pyarrow",
 	  escapechar="\\",
 	  skip_blank_lines=True,
@@ -486,11 +499,11 @@ if params["infile"].lower().endswith(".csv"):
 else:
 	# not a .csv, so probly some sort of officeware spreadsheet...
 	# pandas.read_excel can digest them all.
-	#
+
 	# first we get the column names...
 	inputColumns = pd.read_excel(
 	  params["infile"],
-	  header=int(params["startrow"]) - 2,
+	  header=columnhead,
 	  sheet_name=int(params["sheet"]) - 1,
 	  nrows=0
 	  ).columns
@@ -498,7 +511,7 @@ else:
 	# (see function "maskSpecialChars")
 	df1 = pd.read_excel(
 	  params["infile"],
-	  header=int(params["startrow"]) - 2,
+	  header=columnhead,
 	  sheet_name=int(params["sheet"]) - 1,
 	  converters={col: maskSpecialChars for col in inputColumns}
 	  )
@@ -548,6 +561,8 @@ for s in params.keys():
 			helpMessageDisplayed = True # we won't show this again
 		"""
 		params[s] = guessOrGet(s, metaCols) # get parameter as column label
+	##if str(params[s]) == "!":
+	##	params[s] = ""
 if "help" in params.keys():
 	del params["help"]
 
@@ -569,30 +584,30 @@ df1.insert(loc=len(df1.columns),
   allow_duplicates=True)
 
 # let's begin to construct the output table!
-dfOut = pd.DataFrame()
-dfOut = addColumn(dfOut, df1, params["name"], "Name")
-dfOut = addColumn(dfOut, df1, params["genetic_group"], "Gene Group")
-dfOut = addColumn(dfOut, df1, params["reference"], "Reference")
-dfOut = addColumn(dfOut, df1, params["trueness"], "Trueness to Type")
-dfOut = addColumn(dfOut, df1, params["munq"], "MUNQ")
-dfOut = addColumn(dfOut, df1, params["ploidy"], "Ploidy")
-dfOut = addColumn(dfOut, df1, params["includes_mutations"], "Includes Mutations")
+dfProcessed = pd.DataFrame()
+dfProcessed = addColumn(dfProcessed, df1, params["name"], "Name")
+dfProcessed = addColumn(dfProcessed, df1, params["genetic_group"], "Gene Group")
+dfProcessed = addColumn(dfProcessed, df1, params["reference"], "Reference")
+dfProcessed = addColumn(dfProcessed, df1, params["trueness"], "Trueness to Type")
+dfProcessed = addColumn(dfProcessed, df1, params["munq"], "MUNQ")
+dfProcessed = addColumn(dfProcessed, df1, params["ploidy"], "Ploidy")
+dfProcessed = addColumn(dfProcessed, df1, params["includes_mutations"], "Includes Mutations")
 
 #get rid of the empty last column
 del df1["AnEmptyColumn"]
 
 # add the actual genetic data
-dfOut = dfOut.join(df1.iloc[ : , (params["startcol"]) : ],
+dfProcessed = dfProcessed.join(df1.iloc[ : , (params["startcol"]) : ],
   how="left"
   )
 
-log(dfOut, "Output")
-log(dfOut.columns, "Output Columns")
+log(dfProcessed, "Output")
+log(dfProcessed.columns, "Output Columns")
 
 # write output to file
-if True: ##not "attachto" in params.keys():
+if not "attachto" in params.keys():
 	# we write output to its own file
-	dfOut.to_csv(
+	dfProcessed.to_csv(
 	  path_or_buf=params["outfile"],
 	  ##mode="w" if params["overwrite"] == "w" else None,
 	  mode=params["overwrite"],
@@ -603,24 +618,44 @@ if True: ##not "attachto" in params.keys():
 	  )
 	print("Done.")
 	log("Wrote output to file " + params["outfile"])
-"""
 else:
 	# we attach output to another file, which must be in Genomvergleicher2 csv format
+	log(params["attachto"], "Loading master file to attach to...")
 	dfAttach = pd.read_csv(
 	  params["attachto"],
 	  sep=";",
 	  header=0,
-	  engine="pyarrow",
+	  #engine="pyarrow",
 	  escapechar="\\",
 	  skip_blank_lines=True,
 	  skipinitialspace=True)
 
+	if list(dfAttach.columns[0:6]) != list(dfProcessed.columns[0:6]):
+		print("""
+  The file you want to attach your data to doesn't seem to be in Genomvergleicher2 format.
+  Maybe you want to run it through this program first?
+  Bye!""")
+		sys.exit(1)
+
 	if "deduplicate" in params.keys() and params["deduplicate"] is True:
-		dfOut = dedup(dfAttach, dfOut)
+		dfProcessed = dedup(dfAttach, dfProcessed)
 
-	pass
+	dfCombined = pd.concat([dfAttach, dfProcessed],
 	  axis="index",
-	  ignore_index=True, # resulting df gets a new, clean row numbering
-	  join="outer",
+	  #ignore_index=True, # resulting df gets a new, clean row numbering
+	  join="outer"
+	  )
 
-"""
+	# write result to file
+	dfCombined.to_csv(
+	  path_or_buf=params["outfile"],
+	  ##mode="w" if params["overwrite"] == "w" else None,
+	  mode=params["overwrite"],
+	  sep=";",
+	  index=False,
+	#  decimal=",",
+	  escapechar="\\"
+	  )
+	print("Done.")
+	log("Wrote output to file " + params["outfile"])
+
