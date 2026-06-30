@@ -355,7 +355,7 @@ def askForFilenames():
 	if params["overwrite"] == "x":
 		if Path(params["outfile"]).is_file(): #file exists
 			# overwriting has not been explicitely specified
-			answer = input(f" File {params['outfile']} already exists. Choose 'y' to overwrite or 'q' to quit.")
+			answer = input(f"\n  File {params['outfile']} already exists. Choose 'y' to overwrite or 'q' to quit. ")
 			if str(answer).lower() == "y":
 				params["overwrite"] = "w"
 			else:
@@ -458,6 +458,22 @@ def addColumn(dfA, dfB, colNum, newName):
 	return dfA
 
 
+def notEmpty(x):
+	""" Checks whether arg is an empty string or NaN / None / NA.
+	Args:
+		x (str): String to check.
+	Returns:
+		True if x is not "",
+		False if x is "".
+	"""
+	if str(x) == "" or x is None or x.isna:
+		return False
+	else:
+		return True
+
+
+
+
 
 # main program
 ###############
@@ -472,10 +488,17 @@ if not Path(params["infile"]).is_file():
 	print(f"Error: Input file {params['infile']} not found. Perhaps you mistyped?")
 	sys.exit(1)
 
-# translate startrow into header column
+# make sure we know in which row the actual genetic data start
 if params["startrow"] is None:
 	params["startrow"] = askForStartRow()
+if not str(params["startrow"]).isdecimal():
+	print("""
+  Error: The row where the genetic data start (CL argument '-r' / '--startrow')
+  must be supplied as a row number, counting from 1.""")
+	sys.exit(1)
 
+"""
+#Handle multiple header rows as multiindex...
 if int(params["startrow"]) == 2:
 	# The data start in the second row, so the column labels ('header') are in first row, or in pythonic: The 0st row
 	debug("startrow is 2")
@@ -486,15 +509,17 @@ elif int(params["startrow"]) > 2:
 else:
 	columnhead = None
 log(columnhead, "Rows to use as column headers")
+"""
 
 # now load input file:
 if params["infile"].lower().endswith(".csv"):
-	df1 = pd.read_csv(params["infile"],
+	dfPreview = pd.read_csv(params["infile"],
 	  sep=";",
-	  header=columnhead,
+	  header=None,
 	  engine="pyarrow",
 	  escapechar="\\",
 	  skip_blank_lines=True,
+	  keep_default_na=False,
 	  skipinitialspace=True)
 else:
 	# not a .csv, so probly some sort of officeware spreadsheet...
@@ -503,18 +528,38 @@ else:
 	# first we get the column names...
 	inputColumns = pd.read_excel(
 	  params["infile"],
-	  header=columnhead,
+	  header=None,
 	  sheet_name=int(params["sheet"]) - 1,
-	  nrows=0
+	  nrows=0,
+	  keep_default_na=False
 	  ).columns
 	# ...then we read the whole table, converting all ";" to "," and "|" to "~"
 	# (see function "maskSpecialChars")
-	df1 = pd.read_excel(
+	dfPreview = pd.read_excel(
 	  params["infile"],
-	  header=columnhead,
+	  header=None,
 	  sheet_name=int(params["sheet"]) - 1,
+	  keep_default_na=False,
 	  converters={col: maskSpecialChars for col in inputColumns}
 	  )
+
+if str(params["startrow"]).isdecimal() and int(params["startrow"]) > 2:
+	# make sure we get all available information for the column labels
+	debug(dfPreview.iloc[int(params["startrow"]) - 2 : int(params["startrow"]) - 1], "Header row")
+	for col, content in dfPreview.iloc[int(params["startrow"]) - 2].items():
+		# walk through the rows above the genetic data, look for column label candidates
+		if content == "": #content.isna().all():
+			log("###################################No column label!")
+			debug(str(content) +" @Type: "+ str(type(content)) +" @Size: "+ str(len(content)), "Column " + str(col))
+			dfPreview.iloc[int(params["startrow"]) - 2, col] = "" # Make sure this is an empty string, not float or whatever
+			for i in range(int(params["startrow"]) - 3, -1, -1):
+				debug(str(i) +" "+ str(col), "Position")
+				debug(str(dfPreview.iloc[int(i), int(col)]), "Row " + str(i))
+				debug(str(dfPreview.iloc[int(params["startrow"]) - 2, col]) + " #Type: " + str(type(dfPreview.iloc[int(params["startrow"]) - 2, col])), "Amend")
+				debug("", "amending...")
+				dfPreview.iloc[int(params["startrow"]) - 2, col] = str(dfPreview.iloc[int(params["startrow"]) - 2, col]) + str(dfPreview.iloc[int(i), int(col)])
+
+df1 = dfPreview.rename(columns=dfPreview.iloc[int(params["startrow"]) - 2]).drop(dfPreview.index[ : int(params["startrow"]) - 1]).reset_index(drop=True)
 
 log(df1.head(),"The input:")
 
@@ -627,10 +672,12 @@ else:
 	  header=0,
 	  #engine="pyarrow",
 	  escapechar="\\",
+	  keep_default_na=False,
 	  skip_blank_lines=True,
 	  skipinitialspace=True)
 
-	if list(dfAttach.columns[0:6]) != list(dfProcessed.columns[0:6]):
+	log(str(dfAttach.columns[0:7]), "Checking column labels of target file...")
+	if list(dfAttach.columns[0:7]) != list(dfProcessed.columns[0:7]):
 		print("""
   The file you want to attach your data to doesn't seem to be in Genomvergleicher2 format.
   Maybe you want to run it through this program first?
@@ -645,6 +692,70 @@ else:
 	  #ignore_index=True, # resulting df gets a new, clean row numbering
 	  join="outer"
 	  )
+
+	# rearrange the genotype columns alphabetically
+	newColOrder = list(dfCombined.columns[0 : 7]) + sorted(list(dfCombined.columns[7 : ]))
+	dfCombined = dfCombined.reindex(columns=newColOrder)
+
+	# turn empty string values into '0'
+	"""
+	dfCombined = emptyToZero(d=dfCombined,
+	  sr=params["startrow"],
+	  sc=params["startcol"])
+	"""
+
+	##dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ] = (dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ].apply(emptyToZero))
+	#mask = (dfCombined.index >= int(params["startrow"])) & (dfCombined.columns >= int(params["startcol"]))
+	#dfCombined.loc[mask, dfCombined[mask].eq('')] = '0'
+	"""dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ].where(
+	  cond=dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ].eval(
+	   ),
+	  other="0",
+	  inplace=True)
+
+	cols = df.columns.tolist()
+	start_col_index = cols.index(start_col)
+	mask = (dfCombined.index >= int(params["startrow"])) & (dfCombined.columns.isin(dfCombined.columns.tolist()[int(params["startcol"]) : ]))
+	dfCombined.loc[mask, dfCombined[mask].eq('')] = '0'
+
+	cols = dfCombined.columns.tolist()
+	log(cols, "Columns")
+	start_col_index = params["startcol"] #cols.index.(int(params["startcol"]))
+	log(start_col_index, "start col index")
+	mask = (dfCombined.index >= int(params["startrow"])) & (dfCombined.columns.isin(cols[start_col_index:]))
+	dfCombined.loc[mask, dfCombined[mask].eq('')] = '0'
+
+
+	dfCombined.loc[int(params["startrow"]) - 1 : , dfCombined.columns[int(params["startcol"]) : ]] = (
+	  dfCombined.loc[int(params["startrow"]) -1  : , dfCombined.columns[int(params["startcol"]) : ]]
+	  .applymap(lambda x: "0" if x == "" else x))
+	"""
+
+	"""
+	## Leere Strings ab (start_row, start_col) durch "0" ersetzen
+	dfCombined.loc[start_row:, dfCombined.columns[start_col:]] = (
+	  dfCombined.loc[start_row:, dfCombined.columns[start_col:]]
+	  .applymap(lambda x: "0" if x == "" else x))
+
+	dfCombined.iloc[1:, 7:] = (
+	  dfCombined.iloc[1:, 7:]
+	  .mask(dfCombined.iloc[1:, 7:] == "", "0"))
+	"""
+
+	"""
+	dfCombined.iloc[1 : , 7 : ] = (
+	  dfCombined.iloc[1 : , 7 : ]
+	  .applymap(lambda x: "0" if x == "" else x))
+	"""
+
+	log(dfCombined.iloc[1, 11],"Inkriminierter Wert")
+	log(type(dfCombined.iloc[1, 11]),"Typ")
+
+	sub = dfCombined.iloc[0 : , 7 : ]
+	dfCombined.iloc[0 : , 7 : ] = sub.mask(sub.eq("") | sub.isna(), "0")
+
+	log(dfCombined.iloc[1, 11],"Inkriminierter Wert nachher")
+	log(type(dfCombined.iloc[1, 11]),"Typ nachher")
 
 	# write result to file
 	dfCombined.to_csv(
