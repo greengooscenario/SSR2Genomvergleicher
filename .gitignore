@@ -4,6 +4,7 @@
 private/
 # exclude user generated data
 *.xlsx
+*.ods
 *.csv
 *.protocol.txt
 # exclude files with one-letter-names, as they are probably erroneously created

@@ -65,16 +65,19 @@ def parseParams():
 	"""
 	parser = argparse.ArgumentParser(
 	  description="""Transforms a spreadsheet file or csv table
-	  with SSR data into a csv table fit to be loaded into Genomvergleicher2.
-	  Optionally attach to a existant table, omitting duplicates.
+  with SSR data into a csv table fit to be loaded into Genomvergleicher2.
+  Optionally attach to a existant table, omitting duplicates.
 
-	  Table columns can be given by name, letter or number (starting at 1).
-	  Specify '0' to leave a column empty.
-	  Where adequate, information not given explicitly
-	  will be guessed or omitted.
-	  """,
+  Table columns can be given by name, letter or number (starting at 1).
+  Specify '0' to leave a column empty.
+  Identify columns as 'SHEETNUMBER:COLUMN' to take a column
+  from a different sheet than the genetic data sheet define by '--sheet'.
+  You can combine metadata output columns from more than one input column
+  by specifying like 'COLUMN_1+COLUMN_2+SHEETNUMBER:COLUMN_3'.
+  Where adequate, information not given explicitly will be guessed or omitted.
+  """,
 	  add_help=True)
-	#######################ToDo: Try to add second help option '-?'
+	##ToDo: Try to add second help option '-?'
 	parser.add_argument("-V", "--version",
 	  action='version',
 	  version=f"SSR2Genomvergleicher version {VERSION} -- try '--help' for further instructions")
@@ -88,12 +91,12 @@ def parseParams():
 	  const=2,
 	  default=0,
 	  help="Be very communicative about what is being done.\n")
-	parser.add_argument("infile",
+	parser.add_argument("INFILE",
 	  default="",
 	  help="SSR fingerprint table in csv or arbitrary spreadsheet format.\n")
 	parser.add_argument("-s", "--sheet",
 	  default=1,
-	  help="(Default =%(default)s) For a spreadsheet input file with more than one sheet, specify here which one to work on. '1'=First sheet and so on.\n")
+	  help="(Default =%(default)s) For a spreadsheet input file with more than one sheet, specify the default sheet that holds the genetic data.\n'1'=First sheet and so on.\n")
 	parser.add_argument("-c", "--startcol",
 	  default=None,
 	  help="(Default =%(default)s) Column in which the genetic data start.\n")
@@ -104,12 +107,18 @@ def parseParams():
 	parser.add_argument("-n", "--name",
 	  default="",
 	  help="Which column to use as the 'Name' (cultivar name) column.\n")
+	parser.add_argument("-e", "--prefix",
+	  default=" ", # the space char makes sure the user is not prompted about this any further; it is ignored or gets automatically dropped next time the data are read from file
+	  help="Add this prEfix text to the texts of the 'Name' column.\n")
+	parser.add_argument("-u", "--suffix",
+	  default=" ", # the space char makes sure the user is not prompted about this any further; it is ignored or gets automatically dropped next time the data are read from file
+	  help="Add this sUffix text behind the texts of the 'Name' column.\n")
 	parser.add_argument("-g", "--genetic_group",
 	  default="",
 	  help="Which column to use as the 'Gene Group' (molecular group) column.\n")
 	parser.add_argument("-f", "--reference",
 	  default="",
-	  help="Which column to use as the 'Reference' column (with information weather this is a reference genotype).\n")
+	  help="Which column to use as the 'ReFerence' column (with information weather this is a reference genotype).\n")
 	parser.add_argument("-t", "--trueness",
 	  default="",
 	  help="Which column to use as the 'Trueness-to-Type' column.\n")
@@ -124,8 +133,9 @@ def parseParams():
 	  help="Which column to use as the 'Includes mutations' (that can't be differentiated using SSR markers) column.\n")
 
 	parser.add_argument("-a", "--attachto",
-	  default="", ## space char - important marker!
+	  default="",
 	  help="Attach results to this preexistant table formatted for Genomvergleicher.\n")
+
 	parser.add_argument("-w", "--overwrite",
 	  action="store_const",
 	  const="w",
@@ -225,8 +235,8 @@ def askForStartRow():
 		int: The first row of data, 1-based.
 	"""
 	# load files, preliminary
-	if params["infile"].lower().endswith(".csv"):
-		prelimDf = pd.read_csv(params["infile"],
+	if params["INFILE"].lower().endswith(".csv"):
+		prelimDf = pd.read_csv(params["INFILE"],
 		  sep=";",
 		  header=None,
 		  engine="pyarrow",
@@ -237,7 +247,7 @@ def askForStartRow():
 		# not a .csv, so probly some sort of officeware spreadsheet...
 		# pandas.read_excel can digest them all.
 		prelimDf = pd.read_excel(
-		  params["infile"],
+		  params["INFILE"],
 		  header=None,
 		  sheet_name=int(params["sheet"]) - 1
 		  )
@@ -338,7 +348,7 @@ def askForFilenames():
 		##params["outfile"] = ""
 		if params["attachto"] == "":
 			# no file to attach data to either
-			if params["infile"].lower().endswith(".csv"):
+			if params["INFILE"].lower().endswith(".csv"):
 				# must ask
 				outfilename = input("Please enter output filename, or 'q' to quit': ")
 				if outfilename == "q":
@@ -349,7 +359,7 @@ def askForFilenames():
 				params["outfile"] = outfilename
 				print(f"Will write output to {params['outfile']}")
 			else:
-				params["outfile"] = Path(params["infile"]).stem + ".csv"
+				params["outfile"] = Path(params["INFILE"]).stem + ".csv"
 				print(f"No output filename given. Assuming {params['outfile']}")
 
 	if params["overwrite"] == "x":
@@ -472,9 +482,6 @@ def notEmpty(x):
 		return True
 
 
-
-
-
 # main program
 ###############
 
@@ -484,7 +491,7 @@ params = parseParams()
 verbosity += int(params["verbose"]) + int(params["debug"])
 log(f"Parameters: {params}")
 
-if not Path(params["infile"]).is_file():
+if not Path(params["INFILE"]).is_file():
 	print(f"Error: Input file {params['infile']} not found. Perhaps you mistyped?")
 	sys.exit(1)
 
@@ -512,22 +519,23 @@ log(columnhead, "Rows to use as column headers")
 """
 
 # now load input file:
-if params["infile"].lower().endswith(".csv"):
-	dfPreview = pd.read_csv(params["infile"],
+if params["INFILE"].lower().endswith(".csv"):
+	dfPreview = pd.read_csv(params["INFILE"],
 	  sep=";",
 	  header=None,
 	  engine="pyarrow",
 	  escapechar="\\",
 	  skip_blank_lines=True,
 	  keep_default_na=False,
-	  skipinitialspace=True)
+	  skipinitialspace=True,
+	  on_bad_lines="warn")
 else:
 	# not a .csv, so probly some sort of officeware spreadsheet...
 	# pandas.read_excel can digest them all.
 
 	# first we get the column names...
 	inputColumns = pd.read_excel(
-	  params["infile"],
+	  params["INFILE"],
 	  header=None,
 	  sheet_name=int(params["sheet"]) - 1,
 	  nrows=0,
@@ -536,15 +544,15 @@ else:
 	# ...then we read the whole table, converting all ";" to "," and "|" to "~"
 	# (see function "maskSpecialChars")
 	dfPreview = pd.read_excel(
-	  params["infile"],
+	  params["INFILE"],
 	  header=None,
 	  sheet_name=int(params["sheet"]) - 1,
 	  keep_default_na=False,
 	  converters={col: maskSpecialChars for col in inputColumns}
 	  )
 
+# make sure we get all available information for the column labels in cases with more than 1 header rows
 if str(params["startrow"]).isdecimal() and int(params["startrow"]) > 2:
-	# make sure we get all available information for the column labels
 	debug(dfPreview.iloc[int(params["startrow"]) - 2 : int(params["startrow"]) - 1], "Header row")
 	for col, content in dfPreview.iloc[int(params["startrow"]) - 2].items():
 		# walk through the rows above the genetic data, look for column label candidates
@@ -608,6 +616,7 @@ for s in params.keys():
 		params[s] = guessOrGet(s, metaCols) # get parameter as column label
 	##if str(params[s]) == "!":
 	##	params[s] = ""
+# in case the help message was saved in params...
 if "help" in params.keys():
 	del params["help"]
 
@@ -642,9 +651,33 @@ dfProcessed = addColumn(dfProcessed, df1, params["includes_mutations"], "Include
 del df1["AnEmptyColumn"]
 
 # add the actual genetic data
-dfProcessed = dfProcessed.join(df1.iloc[ : , (params["startcol"]) : ],
+dfProcessed = dfProcessed.join(
+  df1.iloc[ : , (params["startcol"]) : ].astype(int, errors="ignore"),
   how="left"
   )
+
+debug(dfProcessed.dtypes, "Types before NaN-removal")
+
+# turn empty string values in the genetic data into integer 0
+sub = dfProcessed.iloc[0 : , 7 : ]
+dfProcessed.iloc[0 : , 7 : ] = sub.mask(sub.eq("") | sub.isna(), int(0))
+
+debug(dfProcessed.dtypes, "Types after NaN-removal")
+
+# turn empty string values in 'Name' column to '—'
+sub = dfProcessed.Name
+dfProcessed.Name = sub.mask(sub.eq("") | sub.isna(), "—")
+
+# add prefix and suffix to 'Name' column
+if str(params["prefix"]) != " " or str(params["suffix"]) != " ":
+	log(params["prefix"], "Prefix")
+	log(params["suffix"], "Suffix")
+	dfProcessed["Name"] = str(params["prefix"]) + dfProcessed["Name"] + str(params["suffix"])
+	##dfProcessed.assign(Name = lambda thisDF: (str(params["prefix"]) + thisDF.Name + str(params["suffix"])))
+					##= str(params["prefix"]) + str(dfProcessed.Name) + str(params["suffix"]))
+
+# trim leading and trailing spaces
+#dfProcessed.Name = dfProcessed.Name.replace(r"^ +| +$", r"", regex=True)
 
 log(dfProcessed, "Output")
 log(dfProcessed.columns, "Output Columns")
@@ -684,6 +717,8 @@ else:
   Bye!""")
 		sys.exit(1)
 
+	debug(dfAttach.Hi02c07_6.dtypes,"dfAttach Type Hi02c07_6:")
+
 	if "deduplicate" in params.keys() and params["deduplicate"] is True:
 		dfProcessed = dedup(dfAttach, dfProcessed)
 
@@ -693,69 +728,18 @@ else:
 	  join="outer"
 	  )
 
+	# turn empty string values and NaNs in the combined genetic data into integer 0
+	sub = dfCombined.iloc[0 : , 7 : ]
+	dfCombined.iloc[0 : , 7 : ] = sub.mask(sub.eq("") | sub.isna(), int(0))
+	dfCombined.iloc[0 : , 7 : ] = dfCombined.iloc[0 : , 7 : ].astype(int)
+
+	debug(dfCombined.Hi02c07_6.dtypes,"dfCombined Type Hi02c07_6:")
+
 	# rearrange the genotype columns alphabetically
 	newColOrder = list(dfCombined.columns[0 : 7]) + sorted(list(dfCombined.columns[7 : ]))
 	dfCombined = dfCombined.reindex(columns=newColOrder)
 
-	# turn empty string values into '0'
-	"""
-	dfCombined = emptyToZero(d=dfCombined,
-	  sr=params["startrow"],
-	  sc=params["startcol"])
-	"""
-
-	##dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ] = (dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ].apply(emptyToZero))
-	#mask = (dfCombined.index >= int(params["startrow"])) & (dfCombined.columns >= int(params["startcol"]))
-	#dfCombined.loc[mask, dfCombined[mask].eq('')] = '0'
-	"""dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ].where(
-	  cond=dfCombined.iloc[int(params["startrow"]) : , int(params["startcol"]) : ].eval(
-	   ),
-	  other="0",
-	  inplace=True)
-
-	cols = df.columns.tolist()
-	start_col_index = cols.index(start_col)
-	mask = (dfCombined.index >= int(params["startrow"])) & (dfCombined.columns.isin(dfCombined.columns.tolist()[int(params["startcol"]) : ]))
-	dfCombined.loc[mask, dfCombined[mask].eq('')] = '0'
-
-	cols = dfCombined.columns.tolist()
-	log(cols, "Columns")
-	start_col_index = params["startcol"] #cols.index.(int(params["startcol"]))
-	log(start_col_index, "start col index")
-	mask = (dfCombined.index >= int(params["startrow"])) & (dfCombined.columns.isin(cols[start_col_index:]))
-	dfCombined.loc[mask, dfCombined[mask].eq('')] = '0'
-
-
-	dfCombined.loc[int(params["startrow"]) - 1 : , dfCombined.columns[int(params["startcol"]) : ]] = (
-	  dfCombined.loc[int(params["startrow"]) -1  : , dfCombined.columns[int(params["startcol"]) : ]]
-	  .applymap(lambda x: "0" if x == "" else x))
-	"""
-
-	"""
-	## Leere Strings ab (start_row, start_col) durch "0" ersetzen
-	dfCombined.loc[start_row:, dfCombined.columns[start_col:]] = (
-	  dfCombined.loc[start_row:, dfCombined.columns[start_col:]]
-	  .applymap(lambda x: "0" if x == "" else x))
-
-	dfCombined.iloc[1:, 7:] = (
-	  dfCombined.iloc[1:, 7:]
-	  .mask(dfCombined.iloc[1:, 7:] == "", "0"))
-	"""
-
-	"""
-	dfCombined.iloc[1 : , 7 : ] = (
-	  dfCombined.iloc[1 : , 7 : ]
-	  .applymap(lambda x: "0" if x == "" else x))
-	"""
-
-	log(dfCombined.iloc[1, 11],"Inkriminierter Wert")
-	log(type(dfCombined.iloc[1, 11]),"Typ")
-
-	sub = dfCombined.iloc[0 : , 7 : ]
-	dfCombined.iloc[0 : , 7 : ] = sub.mask(sub.eq("") | sub.isna(), "0")
-
-	log(dfCombined.iloc[1, 11],"Inkriminierter Wert nachher")
-	log(type(dfCombined.iloc[1, 11]),"Typ nachher")
+	debug(dfCombined.Hi02c07_6.dtypes,"dfCombined Type Hi02c07_6:")
 
 	# write result to file
 	dfCombined.to_csv(
