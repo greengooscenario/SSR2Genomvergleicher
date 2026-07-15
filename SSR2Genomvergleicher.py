@@ -64,16 +64,13 @@ def parseParams():
 		params (dict): parameters parsed from CL.
 	"""
 	parser = argparse.ArgumentParser(
-	  description="""Transforms a spreadsheet file or csv table
+	  description="""  Transforms a spreadsheet file or csv table
   with SSR data into a csv table fit to be loaded into Genomvergleicher2.
-  Optionally attach to a existant table, omitting duplicates.
+  Optionally attach to a existant table.
 
-  Table columns can be given by name, letter or number (starting at 1).
+  Where options need table columns as arguments,
+  these can be given by name, letter or number (starting at 1).
   Specify '0' to leave a column empty.
-  Identify columns as 'SHEETNUMBER:COLUMN' to take a column
-  from a different sheet than the genetic data sheet define by '--sheet'.
-  You can combine metadata output columns from more than one input column
-  by specifying like 'COLUMN_1+COLUMN_2+SHEETNUMBER:COLUMN_3'.
   Where adequate, information not given explicitly will be guessed or omitted.
   """,
 	  add_help=True)
@@ -498,7 +495,7 @@ if not Path(params["INFILE"]).is_file():
 # make sure we know in which row the actual genetic data start
 if params["startrow"] is None:
 	params["startrow"] = askForStartRow()
-if not str(params["startrow"]).isdecimal():
+if not str(params["startrow"]).isdecimal(): # start row number was given explicitely, but in bogus format
 	print("""
   Error: The row where the genetic data start (CL argument '-r' / '--startrow')
   must be supplied as a row number, counting from 1.""")
@@ -534,10 +531,12 @@ else:
 	# pandas.read_excel can digest them all.
 
 	# first we get the column names...
+	if str(params["sheet"]).isdecimal():
+		params["sheet"] = int(params["sheet"]) - 1
 	inputColumns = pd.read_excel(
 	  params["INFILE"],
 	  header=None,
-	  sheet_name=int(params["sheet"]) - 1,
+	  sheet_name=params["sheet"],
 	  nrows=0,
 	  keep_default_na=False
 	  ).columns
@@ -546,7 +545,7 @@ else:
 	dfPreview = pd.read_excel(
 	  params["INFILE"],
 	  header=None,
-	  sheet_name=int(params["sheet"]) - 1,
+	  sheet_name=params["sheet"],
 	  keep_default_na=False,
 	  converters={col: maskSpecialChars for col in inputColumns}
 	  )
@@ -595,7 +594,11 @@ else: # start column probably given by label
 		metaCols = df1.iloc[ : 1, : startColNum - 1].columns
 	except:
 		metaCols = df1.columns
-		log("proceeding anyway...", "Could not identify start column")
+		print("Could not identify start column.")
+		if str(params["startcol"]).find(":") > -1:
+			print("Perhaps you tried to specify the start column in SHEET:COL format?")
+			print("Please use the '--sheet' argument to specify a table sheet other than the first.")
+		print("...trying to proceed anyway.")
 
 # now we file through the parameters:
 
