@@ -129,6 +129,12 @@ def parseParams():
 	  default="",
 	  help="Which column to use as the 'Includes mutations' (that can't be differentiated using SSR markers) column.\n")
 
+	parser.add_argument("-q", "--no_deduplication",
+	  action='store_const',
+	  const="y",
+	  default="n",
+	  help="Don't remove duplicate fingerprints.\n")
+
 	parser.add_argument("-a", "--attachto",
 	  default="",
 	  help="Attach results to this preexistant table formatted for Genomvergleicher.\n")
@@ -478,6 +484,113 @@ def notEmpty(x):
 	else:
 		return True
 
+def dedup(df, scol, protocolFile): ##ToDo: Remove
+	"""	Finds partial duplicates in a DataFrame, removes them
+		and writes a protocol to file.
+	Args:
+		df (DataFrame): Input data.
+		scol (int): Column from which on the relevant data start.
+		protocolFile (str): Filename to write the deduplication protocol to.
+	Returns:
+		DataFrame: The deduplicated data.
+	"""
+	maskDup = df.duplicated(
+	  subset=df.columns[scol :],
+	  keep="first")
+
+	del df.loc[maskDup, : ]
+	pass
+
+def removeDuplicates(df, scol=7, protFileStem=""):
+	""" Remove rows with duplicate genetic fingerprints, ignoring metadata.
+		The first occurrence of every fingerprint is kept.
+		Every further occurrence is removed.
+	Args:
+		df (DataFrame): Table to be deduplicated.
+		scol (int): Column where the genetic data start, 0-based.
+	Returns:
+		cleaned_df (DataFrame): DESCRIPTION.
+	"""
+	# separate metadata and genetic profile columns:
+	metadata_cols = list(df.columns[:scol])
+	profile_cols = list(df.columns[scol:])
+
+	debug(metadata_cols, "Metadata Columns for deduplication")
+	debug(profile_cols, "Profile Columns for deduplication")
+
+	# we make a working copy, so the original df is left alone
+	working_df = df.copy().reset_index(drop=True)
+
+	# store the current row numbers in a column
+	# => allows us to identify the original rows later:
+	working_df["row_id"] = working_df.index
+
+	# identify duplicate fingerprints -
+	# This produces a series of Booleans reflecting the index of the df, where:
+	# False = first occurrence (original)
+	# True  = duplicate
+	duplicate_mask = working_df.duplicated(
+	  subset=profile_cols,
+	  keep="first")
+
+	# for every profile group, determine the row number of first occurrence.
+	# => transform("first") returns one value for every row, namely
+	# the row_id of the original profile.
+	original_row = (working_df
+	  .groupby(profile_cols, sort=False)["row_id"]
+	  .transform("first"))
+
+	# Build a report DataFrame --
+	# metadata of duplicate rows:
+	duplicate_metadata = (
+	  working_df.loc[duplicate_mask, metadata_cols]
+	  .reset_index(drop=True))
+
+	# metadata of the corresponding originals:
+	original_metadata = (
+	  working_df.loc[original_row[duplicate_mask], metadata_cols]
+	  .reset_index(drop=True))
+
+	# differentiate the 'original' columns
+	original_metadata.columns = [
+	  f"{col}_original" for col in metadata_cols
+	  ]
+
+	# create a 'separator' column
+	separator = pd.DataFrame({
+	  "<Relation>": [" <is a genetic duplicate of> "] * duplicate_mask.sum()
+	  })
+
+	# assemble the report
+	report_df = pd.concat(
+	  [
+	   duplicate_metadata,
+	   separator,
+	   original_metadata
+	  ],
+	  axis=1)
+
+	print("Removed duplicate fingerprints:")
+	print(report_df)
+	if protFileStem != "":
+		print("Writing deduplication report to " + protFileStem + ".deduplication-report.csv")
+		report_df.to_csv(
+		  path_or_buf=protFileStem + ".deduplication-report.csv",
+		  mode="w",
+		  sep="	", # Tab character
+		  index=False,
+		#  decimal=",",
+		  escapechar="\\"
+		  )
+
+	# Finally: create output df with duplicate rows removed
+	cleaned_df = (
+	  working_df.loc[~duplicate_mask]
+	  .drop(columns="row_id")
+	  .reset_index(drop=True)
+	)
+	return cleaned_df
+
 
 # main program
 ###############
@@ -722,9 +835,6 @@ else:
 
 	debug(dfAttach.Hi02c07_6.dtypes,"dfAttach Type Hi02c07_6:")
 
-	if "deduplicate" in params.keys() and params["deduplicate"] is True:
-		dfProcessed = dedup(dfAttach, dfProcessed)
-
 	dfCombined = pd.concat([dfAttach, dfProcessed],
 	  axis="index",
 	  #ignore_index=True, # resulting df gets a new, clean row numbering
@@ -743,6 +853,10 @@ else:
 	dfCombined = dfCombined.reindex(columns=newColOrder)
 
 	debug(dfCombined.Hi02c07_6.dtypes,"dfCombined Type Hi02c07_6:")
+
+	if "no_deduplication" in params.keys() and params["no_deduplication"] == "n":
+		dfCombined = removeDuplicates(dfCombined,
+		  protFileStem=Path(params["attachto"]).stem + "--" + Path(params["INFILE"]).stem)
 
 	# write result to file
 	dfCombined.to_csv(
