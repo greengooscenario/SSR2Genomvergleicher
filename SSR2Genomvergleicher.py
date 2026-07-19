@@ -484,22 +484,6 @@ def notEmpty(x):
 	else:
 		return True
 
-def dedup(df, scol, protocolFile): ##ToDo: Remove
-	"""	Finds partial duplicates in a DataFrame, removes them
-		and writes a protocol to file.
-	Args:
-		df (DataFrame): Input data.
-		scol (int): Column from which on the relevant data start.
-		protocolFile (str): Filename to write the deduplication protocol to.
-	Returns:
-		DataFrame: The deduplicated data.
-	"""
-	maskDup = df.duplicated(
-	  subset=df.columns[scol :],
-	  keep="first")
-
-	del df.loc[maskDup, : ]
-	pass
 
 def removeDuplicates(df, scol=7, protFileStem=""):
 	""" Remove rows with duplicate genetic fingerprints, ignoring metadata.
@@ -508,6 +492,7 @@ def removeDuplicates(df, scol=7, protFileStem=""):
 	Args:
 		df (DataFrame): Table to be deduplicated.
 		scol (int): Column where the genetic data start, 0-based.
+			Defaults to 7.
 	Returns:
 		cleaned_df (DataFrame): DESCRIPTION.
 	"""
@@ -570,6 +555,7 @@ def removeDuplicates(df, scol=7, protFileStem=""):
 	  ],
 	  axis=1)
 
+	log(len(report_df), "Number of removed duplicates")
 	print("Removed duplicate fingerprints:")
 	print(report_df)
 	if protFileStem != "":
