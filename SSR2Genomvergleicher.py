@@ -20,16 +20,18 @@ Avoid this version in your python setup.
 import sys
 import argparse
 from pathlib import Path
+from datetime import datetime
 import pandas as pd
+import numpy as np
+
+# Program version string
+VERSION = "0.3"
 
 # configuration:
 
 # Verbosity level for dubugging
 # (preliminary setting; CL arguments "-d" and "-v" can increase the level)
 verbosity = 1
-
-# Program version string
-VERSION = "0.2"
 
 
 def log(msg, header=""):
@@ -485,6 +487,57 @@ def notEmpty(x):
 		return True
 
 
+def sortAlleles(df, scol=7):
+	""" Sort allele values within each locus in descending order.
+		Each locus may consist of a variable number of allele
+		columns following the naming convention "Locus_AlleleNumber"
+		(e.g. "LocusA_1", "LocusA_2", "LocusA_3").
+		Allele numbers are arbitrary and therefore reordered
+		so that the largest allele value is always stored
+		in the first column of the locus.
+	Args:
+		df (DataFrame): Input containing metadata and genotype columns.
+		scol (int): Index of the first genotype column.
+			All columns before this index are treated as metadata.
+	Returns:
+		Copy of the DataFrame with allele values sorted within every locus.
+	"""
+	# Work on a copy to avoid modifying the original DataFrame
+	workingDf = df.copy()
+	# Genotype columns only
+	genotype_cols = workingDf.columns[scol:]
+	# Collect columns belonging to the same locus in a dict of lists -
+	# Example:
+	#   LocusA -> ["LocusA_1", "LocusA_2", "LocusA_3"]
+	#   LocusB -> ["LocusB_1", "LocusB_2"]
+	loci = {}
+	for col in genotype_cols:
+		locus = col.rsplit("_", 1)[0]
+		loci.setdefault(locus, []).append(col)
+		""" short for:
+				if locus not in loci:
+					loci[locus] = []
+				loci[locus].append(col)
+		"""
+	# Process every locus independently
+	for locus_cols in loci.values():
+		"""
+		# Ensure allele columns are ordered by their suffix (_1, _2, ...).
+		# -This should already be accounted for elsewhere...
+		locus_cols.sort(key=lambda c: int(c.rsplit("_", 1)[1]))
+		"""
+		# Extract values of all allele columns of a locus as NumPy array
+		valuesAtLocus = workingDf[locus_cols].to_numpy()
+		# Sort every row ascending...
+		valuesAtLocus.sort(axis=1)
+		# ...then reverse each row to obtain descending order
+		valuesAtLocus = valuesAtLocus[:, ::-1]
+		# Write sorted values back
+		workingDf.loc[:, locus_cols] = valuesAtLocus
+
+	return workingDf
+
+
 def removeDuplicates(df, scol=7, protFileStem=""):
 	""" Remove rows with duplicate genetic fingerprints, ignoring metadata.
 		The first occurrence of every fingerprint is kept.
@@ -494,74 +547,75 @@ def removeDuplicates(df, scol=7, protFileStem=""):
 		scol (int): Column where the genetic data start, 0-based.
 			Defaults to 7.
 	Returns:
-		cleaned_df (DataFrame): DESCRIPTION.
+		prunedDF (DataFrame): DESCRIPTION.
 	"""
 	# separate metadata and genetic profile columns:
-	metadata_cols = list(df.columns[:scol])
-	profile_cols = list(df.columns[scol:])
+	metaCols = list(df.columns[:scol])
+	profileCols = list(df.columns[scol:])
 
-	debug(metadata_cols, "Metadata Columns for deduplication")
-	debug(profile_cols, "Profile Columns for deduplication")
+	debug(metaCols, "Metadata Columns for deduplication")
+	debug(profileCols, "Profile Columns for deduplication")
 
 	# we make a working copy, so the original df is left alone
-	working_df = df.copy().reset_index(drop=True)
+	workingDF = df.copy().reset_index(drop=True)
 
 	# store the current row numbers in a column
 	# => allows us to identify the original rows later:
-	working_df["row_id"] = working_df.index
+	workingDF["row_id"] = workingDF.index
 
 	# identify duplicate fingerprints -
 	# This produces a series of Booleans reflecting the index of the df, where:
 	# False = first occurrence (original)
 	# True  = duplicate
-	duplicate_mask = working_df.duplicated(
-	  subset=profile_cols,
+	duplicateMask = workingDF.duplicated(
+	  subset=profileCols,
 	  keep="first")
 
 	# for every profile group, determine the row number of first occurrence.
 	# => transform("first") returns one value for every row, namely
 	# the row_id of the original profile.
-	original_row = (working_df
-	  .groupby(profile_cols, sort=False)["row_id"]
+	originalRow = (workingDF
+	  .groupby(profileCols, sort=False)["row_id"]
 	  .transform("first"))
 
 	# Build a report DataFrame --
 	# metadata of duplicate rows:
-	duplicate_metadata = (
-	  working_df.loc[duplicate_mask, metadata_cols]
+	duplicateMetadata = (
+	  workingDF.loc[duplicateMask, metaCols]
 	  .reset_index(drop=True))
 
 	# metadata of the corresponding originals:
-	original_metadata = (
-	  working_df.loc[original_row[duplicate_mask], metadata_cols]
+	originalMetadata = (
+	  workingDF.loc[originalRow[duplicateMask], metaCols]
 	  .reset_index(drop=True))
 
 	# differentiate the 'original' columns
-	original_metadata.columns = [
-	  f"{col}_original" for col in metadata_cols
+	originalMetadata.columns = [
+	  f"{col}_original" for col in metaCols
 	  ]
 
 	# create a 'separator' column
 	separator = pd.DataFrame({
-	  "<Relation>": [" <is a genetic duplicate of> "] * duplicate_mask.sum()
+	  "<Relation>": [" <is a genetic duplicate of> "] * duplicateMask.sum()
 	  })
 
 	# assemble the report
-	report_df = pd.concat(
+	reportDF = pd.concat(
 	  [
-	   duplicate_metadata,
+	   duplicateMetadata,
 	   separator,
-	   original_metadata
+	   originalMetadata
 	  ],
 	  axis=1)
 
-	log(len(report_df), "Number of removed duplicates")
+	log(len(reportDF), "Number of removed duplicates")
 	print("Removed duplicate fingerprints:")
-	print(report_df)
+	print(reportDF)
 	if protFileStem != "":
-		print("Writing deduplication report to " + protFileStem + ".deduplication-report.csv")
-		report_df.to_csv(
-		  path_or_buf=protFileStem + ".deduplication-report.csv",
+		reportFile = protFileStem + ".deduplication-report." + datetime.today().strftime("%Y-%m-%d_%Hh%Mm%Ss") + ".csv"
+		print("Writing deduplication report to " + reportFile)
+		reportDF.to_csv(
+		  path_or_buf=reportFile,
 		  mode="w",
 		  sep="	", # Tab character
 		  index=False,
@@ -570,12 +624,12 @@ def removeDuplicates(df, scol=7, protFileStem=""):
 		  )
 
 	# Finally: create output df with duplicate rows removed
-	cleaned_df = (
-	  working_df.loc[~duplicate_mask]
+	prunedDF = (
+	  workingDF.loc[~duplicateMask]
 	  .drop(columns="row_id")
 	  .reset_index(drop=True)
 	)
-	return cleaned_df
+	return prunedDF
 
 
 # main program
@@ -787,6 +841,15 @@ log(dfProcessed.columns, "Output Columns")
 # write output to file
 if not "attachto" in params.keys():
 	# we write output to its own file
+
+	# first we deduplicate, if this wasn't turned off
+	if "no_deduplication" in params.keys() and params["no_deduplication"] == "n":
+		log("", "Sort Alleles...")
+		dfProcessed = sortAlleles(dfProcessed)
+		log("", "Deduplicate...")
+		dfProcessed = removeDuplicates(dfProcessed,
+		  protFileStem=Path(params["outfile"]).stem)
+
 	dfProcessed.to_csv(
 	  path_or_buf=params["outfile"],
 	  ##mode="w" if params["overwrite"] == "w" else None,
@@ -841,6 +904,9 @@ else:
 	debug(dfCombined.Hi02c07_6.dtypes,"dfCombined Type Hi02c07_6:")
 
 	if "no_deduplication" in params.keys() and params["no_deduplication"] == "n":
+		log("", "Sort Alleles...")
+		dfCombined = sortAlleles(dfCombined)
+		log("", "Deduplicate...")
 		dfCombined = removeDuplicates(dfCombined,
 		  protFileStem=Path(params["attachto"]).stem + "--" + Path(params["INFILE"]).stem)
 
