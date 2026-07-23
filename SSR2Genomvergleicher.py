@@ -275,6 +275,28 @@ def usersPick(l=None, required=False, optSpacer="\n"):
 		return l[int(a) - 1] # we return the value, not the index
 
 
+def queryStartRow(df):
+	""" Make sure we have a data start row that defines the header / column labels row
+	Returns:
+		int: The first row of data, 1-based.
+	"""
+	# purpose-made df to reshape the input,
+	# for the user to pick start row in a 1-based manner:
+	prelimDf = df.copy()
+	(ourRow, ourCol) = prelimDf.shape
+	zeroDf = pd.DataFrame("", index=range(1), columns=range(ourCol))
+	prelimDf = pd.concat([zeroDf, prelimDf], axis="index", ignore_index=True)
+
+	print("""
+  The row in which the genetic data start has not been defined -
+  please pick the correct row number manually.
+  (Hint: We are looking for the first row that is NOT column labels.
+  If you don't know what to do, '2' would be a good guess.)
+  """)
+	print(prelimDf.iloc[1:6])
+	return int(usersPick(required=True))
+
+
 def askForStartRow():
 	""" Make sure we have a data start row that defines the header / column labels row
 	Returns:
@@ -778,13 +800,13 @@ else:
 
 # make sure we know in which row the actual genetic data start
 if params["startrow"] is None:
-	params["startrow"] = askForStartRow()
+	params["startrow"] = queryStartRow(dfPreview)
 if not str(params["startrow"]).isdecimal(): # start row number was given explicitely, but in bogus format
 	print("Error: The row where the genetic data start (CL argument '-r' / '--startrow') \n must be supplied as a row number, counting from 1.")
 	sys.exit(1)
 
 # make sure we get all available information for the column labels in cases with more than 1 header rows
-if str(params["startrow"]).isdecimal() and int(params["startrow"]) > 2:
+if int(params["startrow"]) > 2:
 	debug(dfPreview.iloc[int(params["startrow"]) - 2 : int(params["startrow"]) - 1], "Header row")
 	for col, content in dfPreview.iloc[int(params["startrow"]) - 2].items():
 		# walk through the rows above the genetic data, look for column label candidates
@@ -799,6 +821,7 @@ if str(params["startrow"]).isdecimal() and int(params["startrow"]) > 2:
 				debug("", "amending...")
 				dfPreview.iloc[int(params["startrow"]) - 2, col] = str(dfPreview.iloc[int(params["startrow"]) - 2, col]) + str(dfPreview.iloc[int(i), int(col)])
 
+# turn the row before 'startrow' into column labels
 df1 = dfPreview.rename(columns=dfPreview.iloc[int(params["startrow"]) - 2]).drop(dfPreview.index[ : int(params["startrow"]) - 1]).reset_index(drop=True)
 
 log(df1.head(),"The input:")
