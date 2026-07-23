@@ -20,6 +20,7 @@ Avoid this version in your python setup.
 import sys
 import argparse
 from pathlib import Path
+import os
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -90,11 +91,16 @@ def parseParams():
 	  const=2,
 	  default=0,
 	  help="Be very communicative about what is being done.\n")
+	parser.add_argument("-q", "--questions",
+	  action='store_const',
+	  const="y",
+	  default="n",
+	  help="Dialog-oriented mode: Make less assumptions, ask more questions\n")
 	parser.add_argument("INFILE",
 	  default="",
 	  help="SSR fingerprint table in csv or arbitrary spreadsheet format.\n")
 	parser.add_argument("-s", "--sheet",
-	  default=1,
+	  default=None,
 	  help="(Default =%(default)s) For a spreadsheet input file with more than one sheet, specify the default sheet that holds the genetic data.\n'1'=First sheet and so on.\n")
 	parser.add_argument("-c", "--startcol",
 	  default=None,
@@ -109,7 +115,7 @@ def parseParams():
 	parser.add_argument("-e", "--prefix",
 	  default=" ", # the space char makes sure the user is not prompted about this any further; it is ignored or gets automatically dropped next time the data are read from file
 	  help="Add this prEfix text to the texts of the 'Name' column.\n")
-	parser.add_argument("-u", "--suffix",
+	parser.add_argument("-x", "--suffix",
 	  default=" ", # the space char makes sure the user is not prompted about this any further; it is ignored or gets automatically dropped next time the data are read from file
 	  help="Add this sUffix text behind the texts of the 'Name' column.\n")
 	parser.add_argument("-g", "--genetic_group",
@@ -131,11 +137,11 @@ def parseParams():
 	  default="",
 	  help="Which column to use as the 'Includes mutations' (that can't be differentiated using SSR markers) column.\n")
 
-	parser.add_argument("-q", "--no_deduplication",
+	parser.add_argument("-u", "--deduplication",
 	  action='store_const',
 	  const="y",
 	  default="n",
-	  help="Don't remove duplicate fingerprints.\n")
+	  help="Remove duplicate genetic fingerprints.\n")
 
 	parser.add_argument("-a", "--attachto",
 	  default="",
@@ -154,6 +160,41 @@ def parseParams():
 	outputDict = vars(parser.parse_args())
 	##outputDict["help"] = parser.format_help()
 	return outputDict
+
+
+def checkSheet(dictOfDFs):
+	""" Ask the user which sheet in a spreadsheet file we want to look at.
+		Return the 0-based index number of the sheet.
+	Args:
+		dictOfDFs (dict of pd.DataFrames): A dict of dataframes
+			representing the sheets in a spreadsheet file
+	Returns:
+		int: 0-based sheet number
+			or
+		str: Label.
+	"""
+	log(dictOfDFs, "Dict of preliminary read")
+	print("""
+
+The spreadsheet file you entered contains several sheets.
+Please specify which sheet contains the genetic fingerprint data:""")
+	s = ""
+	while (s == "") or (not s.isdecimal()) or (int(s) < 1) or (int(s) > len(dictOfDFs)):
+		indexNo = 0
+		for label, df in dictOfDFs.items():
+			indexNo += 1
+			print()
+			print(" " + str(indexNo) + ": " + str(label) + " ")
+			print(str(list(df.iloc[0]))[ : 79])
+			print(str(list(df.iloc[1]))[ : 79])
+			print(str(list(df.iloc[2]))[ : 79])
+			print(str(list(df.iloc[3]))[ : 79])
+		s = input("\n Please enter number, or 'q' to quit: ")
+		if s.lower() == "q":
+			print("See you later!")
+			sys.exit(0)
+	log(str(int(s) - 1), "User's choice")
+	return int(s) - 1
 
 
 def guessOrGet(parameter, inputCols):
@@ -323,30 +364,53 @@ def askForFilenames():
 			sys.exit(1)
 	else: # no file to attach the data to was given
 		##params["attachto"] = ""
-		if len(sys.argv) < 3:
-			# we've been called with only the infile as argument --
-			# perhaps we are in drag+drop-mode?
+		if len(sys.argv) < 3 or params["questions"] == "y":
+			# we've been called in dialog mode, or with only the
+			# infile as argument -- perhaps we are in drag+drop-mode?
 			# just in case, we'll ask the user for a premade file
-			# to attach data to
-			attfilename = "/"
-			while attfilename == "/": ##ToDo: Use a decent file chooser!
-				print("""
+			# to attach data to, and some other things
+			print("""
+
   Would you like to attach your genetic data to a preexistant table?
-  (Hint: It might be more convenient to name a file to attach data to
-  on the command line with the '-a filename.csv' switch.)
-				  """)
-				attfilename = input("Please enter filename, 'q' to quit, or 'x' or just ENTER to not attach to another file.")
+  """)
+			attfilename = ""
+			tryAgain = True
+			while tryAgain:
+				attfilename = input("""
+Please enter filename,
+TAB to show folder content or all possible completions to your input,
+'q' to quit, or 'x' or just ENTER to not attach to another file:
+""")
 				if attfilename == "q":
 					print("See you later!")
 					sys.exit(0)
 				if attfilename == "" or attfilename == "x":
 					attfilename = ""
 					break
+				if attfilename.find("\t") > -1:
+					print()
+					print("How about:")
+					files = os.listdir()
+					for file in files:
+						if file.startswith(attfilename.rstrip("\t")) and file.endswith('.csv'):
+							print(file)
+					continue
 				if not Path(attfilename).is_file():
-					attfilename = "/"
 					print("File not found. Please try again.")
+				else:
+					tryAgain = False
+					break
 			params["attachto"] = attfilename
 			log(params["attachto"], "Attach to file")
+
+			if attfilename != "":
+				# we are in Attach-Mode, so deduplication might be required
+				a = ""
+				while a != "y" and a != "n":
+					a = input("\n Remove duplicate figerprints after joining tables?\n (A detailed report on deduplication will be written) (y/n)")
+					a = a.lower()
+				params["deduplication"] = a
+
 
 	# check for outfile
 	if params["outfile"] == "": # no outfile given
@@ -645,15 +709,6 @@ if not Path(params["INFILE"]).is_file():
 	print(f"Error: Input file {params['infile']} not found. Perhaps you mistyped?")
 	sys.exit(1)
 
-# make sure we know in which row the actual genetic data start
-if params["startrow"] is None:
-	params["startrow"] = askForStartRow()
-if not str(params["startrow"]).isdecimal(): # start row number was given explicitely, but in bogus format
-	print("""
-  Error: The row where the genetic data start (CL argument '-r' / '--startrow')
-  must be supplied as a row number, counting from 1.""")
-	sys.exit(1)
-
 """
 #Handle multiple header rows as multiindex...
 if int(params["startrow"]) == 2:
@@ -683,17 +738,35 @@ else:
 	# not a .csv, so probly some sort of officeware spreadsheet...
 	# pandas.read_excel can digest them all.
 
-	# first we get the column names...
+	# preliminary loading for analysis of file structure:
 	if str(params["sheet"]).isdecimal():
 		params["sheet"] = int(params["sheet"]) - 1
-	inputColumns = pd.read_excel(
+	preliminaryDFs = pd.read_excel(
 	  params["INFILE"],
 	  header=None,
-	  sheet_name=params["sheet"],
-	  nrows=0,
+	  sheet_name=params["sheet"], # if this is None, a dict of DFs will be returned
+	  nrows=5,
 	  keep_default_na=False
-	  ).columns
-	# ...then we read the whole table, converting all ";" to "," and "|" to "~"
+	  )
+	log(type(preliminaryDFs), "Type of preliminarily loaded DFs")
+
+	if isinstance(preliminaryDFs, dict): # we have no info about which sheet contains the data
+		log(len(preliminaryDFs), "Length of dict of DFs")
+		if len(preliminaryDFs) > 1: # there is more than 1 sheet in the spreadsheet file
+			params["sheet"] = checkSheet(preliminaryDFs)
+			log(params["sheet"], "Sheet number")
+			inputColumns = list(preliminaryDFs.values())[params["sheet"]].columns
+		else:
+			debug("", "Only one sheet in the file => using that.")
+			params["sheet"] = int(0)
+	elif isinstance(preliminaryDFs, pd.DataFrame): # the correct sheet is already loaded
+		inputColumns = preliminaryDFs.columns
+	else: # no idea what we just loaded
+		print("Error while loading input data. Use -v or -d command line switch to analyse.")
+		log(type(preliminaryDFs), "Loaded data are of type")
+		sys.exit(1)
+
+	# ...now we read the whole table, converting all ";" to "," and "|" to "~"
 	# (see function "maskSpecialChars")
 	dfPreview = pd.read_excel(
 	  params["INFILE"],
@@ -702,6 +775,13 @@ else:
 	  keep_default_na=False,
 	  converters={col: maskSpecialChars for col in inputColumns}
 	  )
+
+# make sure we know in which row the actual genetic data start
+if params["startrow"] is None:
+	params["startrow"] = askForStartRow()
+if not str(params["startrow"]).isdecimal(): # start row number was given explicitely, but in bogus format
+	print("Error: The row where the genetic data start (CL argument '-r' / '--startrow') \n must be supplied as a row number, counting from 1.")
+	sys.exit(1)
 
 # make sure we get all available information for the column labels in cases with more than 1 header rows
 if str(params["startrow"]).isdecimal() and int(params["startrow"]) > 2:
@@ -843,7 +923,7 @@ if not "attachto" in params.keys():
 	# we write output to its own file
 
 	# first we deduplicate, if this wasn't turned off
-	if "no_deduplication" in params.keys() and params["no_deduplication"] == "n":
+	if "deduplication" in params.keys() and params["deduplication"] == "y":
 		log("", "Sort Alleles...")
 		dfProcessed = sortAlleles(dfProcessed)
 		log("", "Deduplicate...")
@@ -903,7 +983,7 @@ else:
 
 	debug(dfCombined.Hi02c07_6.dtypes,"dfCombined Type Hi02c07_6:")
 
-	if "no_deduplication" in params.keys() and params["no_deduplication"] == "n":
+	if "deduplication" in params.keys() and params["deduplication"] == "y":
 		log("", "Sort Alleles...")
 		dfCombined = sortAlleles(dfCombined)
 		log("", "Deduplicate...")
